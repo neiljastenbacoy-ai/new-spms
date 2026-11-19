@@ -1,0 +1,195 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function activeUser() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isActive', true) == true;
+    }
+
+    function isAdmin() {
+      return activeUser()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function registrationOpen() {
+      return !exists(/databases/$(database)/documents/systemSettings/general)
+        || get(/databases/$(database)/documents/systemSettings/general).data.get('registrationOpen', true) == true;
+    }
+
+    function projectExists(projectId) {
+      return exists(/databases/$(database)/documents/projects/$(projectId));
+    }
+
+    function canAccessProject(projectId) {
+      return activeUser()
+        && projectExists(projectId)
+        && (
+          isAdmin()
+          || get(/databases/$(database)/documents/projects/$(projectId)).data.leaderId == request.auth.uid
+          || get(/databases/$(database)/documents/projects/$(projectId)).data.get('adviserId', '') == request.auth.uid
+          || request.auth.uid in get(/databases/$(database)/documents/projects/$(projectId)).data.get('memberIds', [])
+        );
+    }
+
+    function canManageProject(projectId) {
+      return isAdmin()
+        || (
+          activeUser()
+          &&
+          projectExists(projectId)
+          && get(/databases/$(database)/documents/projects/$(projectId)).data.leaderId == request.auth.uid
+        );
+    }
+
+    function canUploadProjectFiles() {
+      return activeUser()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['student', 'project_leader'];
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && registrationOpen()
+        && request.resource.data.role == 'student'
+        && request.resource.data.get('isActive', true) == true
+        && request.resource.data.keys().hasOnly([
+          'id', 'name', 'email', 'role', 'avatar', 'studentId', 'department', 'phone', 'bio', 'photoUrl', 'isActive'
+        ]);
+      allow update: if isAdmin()
+        || (
+          activeUser()
+          && request.auth.uid == userId
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'name', 'email', 'avatar', 'studentId', 'department', 'phone', 'bio', 'photoUrl'
+          ])
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /teamDirectory/{userId} {
+      allow read: if activeUser();
+      allow create: if signedIn()
+        && request.auth.uid == userId
+        && registrationOpen()
+        && request.resource.data.role == 'student';
+      allow update: if isAdmin()
+        || (
+          activeUser()
+          && request.auth.uid == userId
+          && request.resource.data.role == resource.data.role
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read: if canAccessProject(projectId);
+      allow create: if activeUser()
+        && request.resource.data.leaderId == request.auth.uid
+        && request.resource.data.memberIds is list;
+      allow update: if canManageProject(projectId)
+        || (
+          activeUser()
+          && resource.data.adviserId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'progress', 'feedback'])
+        );
+      allow delete: if canManageProject(projectId);
+    }
+
+    match /tasks/{taskId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canManageProject(request.resource.data.projectId)
+        && (
+          request.resource.data.assigneeId in get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('memberIds', [])
+          || request.resource.data.assigneeId == get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.leaderId
+        );
+      allow update: if canManageProject(resource.data.projectId)
+        || (
+          activeUser()
+          && resource.data.assigneeId == request.auth.uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completedAt'])
+        );
+      allow delete: if canManageProject(resource.data.projectId);
+    }
+
+    match /files/{fileId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canUploadProjectFiles()
+        && request.resource.data.uploadedBy == request.auth.uid
+        && request.resource.data.id == fileId
+        && request.resource.data.size is int
+        && request.resource.data.size >= 0
+        && request.resource.data.size <= 512000
+        && canAccessProject(request.resource.data.projectId);
+      allow delete: if canAccessProject(resource.data.projectId)
+        && (
+          isAdmin()
+          || resource.data.uploadedBy == request.auth.uid
+          || canManageProject(resource.data.projectId)
+        );
+      allow update: if false;
+    }
+
+    match /fileContents/{fileId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if canUploadProjectFiles()
+        && request.resource.data.keys().hasOnly([
+          'projectId', 'uploadedBy', 'contentType', 'dataBase64'
+        ])
+        && request.resource.data.uploadedBy == request.auth.uid
+        && request.resource.data.projectId is string
+        && request.resource.data.contentType is string
+        && request.resource.data.dataBase64 is string
+        && request.resource.data.dataBase64.size() <= 682668
+        && canAccessProject(request.resource.data.projectId);
+      allow delete: if canAccessProject(resource.data.projectId)
+        && (
+          isAdmin()
+          || resource.data.uploadedBy == request.auth.uid
+          || canManageProject(resource.data.projectId)
+        );
+      allow update: if false;
+    }
+
+    match /activities/{activityId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if activeUser()
+        && request.resource.data.userId == request.auth.uid
+        && canAccessProject(request.resource.data.projectId);
+      allow update, delete: if isAdmin();
+    }
+
+    match /systemSettings/{settingsId} {
+      allow read: if settingsId == 'general';
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'academicYear', 'semester', 'registrationOpen', 'updatedAt', 'updatedBy'
+        ])
+        && request.resource.data.academicYear is string
+        && request.resource.data.semester is string
+        && request.resource.data.registrationOpen is bool
+        && request.resource.data.updatedBy == request.auth.uid;
+      allow delete: if false;
+    }
+
+    match /auditLogs/{auditId} {
+      allow read: if isAdmin();
+      allow create: if activeUser()
+        && request.resource.data.keys().hasOnly([
+          'action', 'actorId', 'actorName', 'targetId', 'targetName', 'details', 'createdAt'
+        ])
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.actorName is string
+        && request.resource.data.action is string
+        && request.resource.data.details is string
+        && request.resource.data.createdAt is string;
+      allow update, delete: if false;
+    }
+  }
+}
