@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 
 const firebaseApp = initializeApp({
   apiKey: 'AIzaSyA5m8W2KQ2cenQKmgw24r0JmdXvEDRTf7s',
@@ -12,4 +12,6 @@ const firebaseApp = initializeApp({
 });
 
 export const firebaseAuth = getAuth(firebaseApp);
-export const firestore = getFirestore(firebaseApp);
+// `ignoreUndefinedProperties` lets optional fields (deadline, adviser, due time)
+// be absent without Firestore rejecting the whole write.
+export const firestore = initializeFirestore(firebaseApp, { ignoreUndefinedProperties: true });

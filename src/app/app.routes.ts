@@ -24,13 +24,13 @@ export const routes: Routes = [
       {
         path: 'projects',
         canActivate: [roleGuard],
-        data: { roles: ['student', 'project_leader', 'adviser'] },
+        data: { roles: ['student', 'project_leader', 'adviser', 'admin'] },
         loadComponent: () => import('./features/projects/projects.component').then(m => m.ProjectsComponent)
       },
       {
         path: 'tasks',
         canActivate: [roleGuard],
-        data: { roles: ['student', 'project_leader'] },
+        data: { roles: ['student', 'project_leader', 'adviser', 'admin'] },
         loadComponent: () => import('./features/tasks/tasks.component').then(m => m.TasksComponent)
       },
       {
@@ -48,7 +48,7 @@ export const routes: Routes = [
       {
         path: 'deadlines',
         canActivate: [roleGuard],
-        data: { roles: ['student', 'project_leader'] },
+        data: { roles: ['student', 'project_leader', 'adviser', 'admin'] },
         loadComponent: () => import('./features/deadlines/deadlines.component').then(m => m.DeadlinesComponent)
       },
       {

@@ -37,8 +37,7 @@ service cloud.firestore {
     }
 
     function canManageProject(projectId) {
-      return isAdmin()
-        || (
+      return (
           activeUser()
           &&
           projectExists(projectId)
@@ -59,7 +58,7 @@ service cloud.firestore {
         && request.resource.data.role == 'student'
         && request.resource.data.get('isActive', true) == true
         && request.resource.data.keys().hasOnly([
-          'id', 'name', 'email', 'role', 'avatar', 'studentId', 'department', 'phone', 'bio', 'photoUrl', 'isActive'
+          'id', 'name', 'email', 'role', 'avatar', 'studentId', 'department', 'program', 'phone', 'bio', 'photoUrl', 'isActive'
         ]);
       allow update: if isAdmin()
         || (
@@ -67,7 +66,7 @@ service cloud.firestore {
           && request.auth.uid == userId
           && request.resource.data.role == resource.data.role
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'name', 'email', 'avatar', 'studentId', 'department', 'phone', 'bio', 'photoUrl'
+            'name', 'email', 'avatar', 'studentId', 'department', 'program', 'phone', 'bio', 'photoUrl'
           ])
         );
       allow delete: if isAdmin();
@@ -91,6 +90,7 @@ service cloud.firestore {
     match /projects/{projectId} {
       allow read: if canAccessProject(projectId);
       allow create: if activeUser()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'project_leader'
         && request.resource.data.leaderId == request.auth.uid
         && request.resource.data.memberIds is list;
       allow update: if canManageProject(projectId)
@@ -113,9 +113,56 @@ service cloud.firestore {
         || (
           activeUser()
           && resource.data.assigneeId == request.auth.uid
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'completedAt'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'status', 'completedAt', 'priority', 'dueDate'
+          ])
+          && request.resource.data.priority in ['low', 'medium', 'high']
+          && request.resource.data.dueDate is string
+          && request.resource.data.dueDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         );
       allow delete: if canManageProject(resource.data.projectId);
+    }
+
+    // Adviser review notes attached to a single task. Readable by everyone on
+    // the project; writable by the adviser or the project leader.
+    match /taskComments/{commentId} {
+      allow read: if canAccessProject(resource.data.projectId);
+      allow create: if activeUser()
+        && request.resource.data.keys().hasOnly([
+          'id', 'taskId', 'projectId', 'authorId', 'authorName', 'authorRole', 'body', 'createdAt'
+        ])
+        && request.resource.data.id == commentId
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.authorName is string
+        && request.resource.data.body is string
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 2000
+        && request.resource.data.createdAt is string
+        && canAccessProject(request.resource.data.projectId)
+        && (
+          get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.leaderId == request.auth.uid
+          || get(/databases/$(database)/documents/projects/$(request.resource.data.projectId)).data.get('adviserId', '') == request.auth.uid
+        );
+      allow update, delete: if false;
+    }
+
+    // Account notices. Admins write them; only the recipient can mark them read.
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isAdmin()
+        && request.resource.data.keys().hasOnly([
+          'userId', 'kind', 'title', 'body', 'createdAt', 'read'
+        ])
+        && request.resource.data.userId is string
+        && request.resource.data.kind is string
+        && request.resource.data.title is string
+        && request.resource.data.body is string
+        && request.resource.data.createdAt is string
+        && request.resource.data.read == false;
+      allow update: if signedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if isAdmin();
     }
 
     match /files/{fileId} {
@@ -129,8 +176,7 @@ service cloud.firestore {
         && canAccessProject(request.resource.data.projectId);
       allow delete: if canAccessProject(resource.data.projectId)
         && (
-          isAdmin()
-          || resource.data.uploadedBy == request.auth.uid
+          resource.data.uploadedBy == request.auth.uid
           || canManageProject(resource.data.projectId)
         );
       allow update: if false;
@@ -150,8 +196,7 @@ service cloud.firestore {
         && canAccessProject(request.resource.data.projectId);
       allow delete: if canAccessProject(resource.data.projectId)
         && (
-          isAdmin()
-          || resource.data.uploadedBy == request.auth.uid
+          resource.data.uploadedBy == request.auth.uid
           || canManageProject(resource.data.projectId)
         );
       allow update: if false;
@@ -162,7 +207,7 @@ service cloud.firestore {
       allow create: if activeUser()
         && request.resource.data.userId == request.auth.uid
         && canAccessProject(request.resource.data.projectId);
-      allow update, delete: if isAdmin();
+      allow update, delete: if false;
     }
 
     match /systemSettings/{settingsId} {

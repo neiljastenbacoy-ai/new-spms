@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { DataService } from '../../core/services/data.service';
+import { formatTime } from '../../core/utils/date-time';
 
 @Component({
   selector: 'app-dashboard',
@@ -12,53 +13,55 @@ import { DataService } from '../../core/services/data.service';
   template: `
     <section class="hero">
       <div class="hero-text">
-        <span class="hero-kicker">{{ roleLabel() }} workspace</span>
-        <h1>{{ greeting() }}, {{ firstName() }}.</h1>
-        <p>{{ roleDescription() }}</p>
-        <a [routerLink]="primaryRoute()" class="btn-cta">{{ primaryAction() }} →</a>
+        <span class="hero-kicker"><i aria-hidden="true"></i>{{ roleLabel() }} workspace</span>
+        <h1>{{ greeting() }},<br /><em>{{ firstName() }}.</em></h1>
+        <a [routerLink]="primaryRoute()" class="btn-cta">
+          {{ primaryAction() }} <span class="cta-arrow" aria-hidden="true">→</span>
+        </a>
       </div>
-      <div class="hero-context">
-        <span>ACADEMIC PERIOD</span>
+
+      <aside class="hero-context">
+        <span>Academic period</span>
         <strong>{{ academicPeriod() }}</strong>
-        <small>Live information from your SPMS workspace</small>
-      </div>
+        <small>Live record from your SPMS workspace</small>
+        <div class="stamp">
+          <b>{{ stats().totalProjects }}</b>
+          <span>Projects<br />on file</span>
+        </div>
+      </aside>
     </section>
 
     <div class="stats">
-      <div class="stat card-blue">
-        <div class="stat-icon">01</div>
-        <div class="stat-body">
-          <div class="stat-value">{{ stats().totalProjects }}</div>
-          <div class="stat-label">{{ isAdmin() ? 'Total projects' : isStudent() ? 'Assigned projects' : isAdviser() ? 'Assigned projects' : 'Led projects' }}</div>
-        </div>
-      </div>
-      <div class="stat card-green">
-        <div class="stat-icon">02</div>
-        <div class="stat-body">
-          <div class="stat-value">{{ stats().completedTasks }}</div>
-          <div class="stat-label">Tasks completed</div>
-        </div>
-      </div>
-      <div class="stat card-orange">
-        <div class="stat-icon">03</div>
-        <div class="stat-body">
-          <div class="stat-value">{{ stats().pendingTasks }}</div>
-          <div class="stat-label">Open tasks</div>
-        </div>
-      </div>
-      <div class="stat card-purple">
-        <div class="stat-icon">04</div>
-        <div class="stat-body">
-          <div class="stat-value">{{ stats().teamMembers }}</div>
-          <div class="stat-label">{{ isAdmin() ? 'User accounts' : 'Project members' }}</div>
-        </div>
-      </div>
+      <a class="stat card-blue" [routerLink]="projectsRoute()" aria-label="Open projects">
+        <span class="stat-index">01</span>
+        <div class="stat-value">{{ stats().totalProjects }}</div>
+        <div class="stat-label">{{ isAdmin() ? 'Total projects' : isStudent() ? 'Assigned projects' : isAdviser() ? 'Assigned projects' : 'Led projects' }}</div>
+        <span class="stat-rule" aria-hidden="true"></span>
+      </a>
+      <a class="stat card-green" [routerLink]="taskRoute()" aria-label="Open completed tasks">
+        <span class="stat-index">02</span>
+        <div class="stat-value">{{ stats().completedTasks }}</div>
+        <div class="stat-label">Tasks completed</div>
+        <span class="stat-rule" aria-hidden="true"></span>
+      </a>
+      <a class="stat card-orange" [routerLink]="taskRoute()" aria-label="Open open tasks">
+        <span class="stat-index">03</span>
+        <div class="stat-value">{{ stats().pendingTasks }}</div>
+        <div class="stat-label">Open tasks</div>
+        <span class="stat-rule" aria-hidden="true"></span>
+      </a>
+      <a class="stat card-purple" [routerLink]="peopleRoute()" aria-label="Open members">
+        <span class="stat-index">04</span>
+        <div class="stat-value">{{ stats().teamMembers }}</div>
+        <div class="stat-label">{{ isAdmin() ? 'User accounts' : 'Project members' }}</div>
+        <span class="stat-rule" aria-hidden="true"></span>
+      </a>
     </div>
 
     <div class="grid-3">
       <div class="panel">
         <div class="panel-head">
-          <div><h3>Project status</h3><span class="panel-subtitle">Current portfolio snapshot</span></div>
+          <div><h3>Project status</h3><span class="panel-subtitle">Portfolio snapshot</span></div>
           <a routerLink="/projects" class="link">View projects →</a>
         </div>
         <div class="status-summary">
@@ -87,7 +90,7 @@ import { DataService } from '../../core/services/data.service';
             @for (w of teamSummary(); track w.user.id) {
               <li>
                 <span class="dot" [style.background]="colors[$index % colors.length]"></span>
-                {{ w.user.name }}
+                <span class="w-name">{{ w.user.name }}</span>
                 <strong>{{ w.value }}</strong>
               </li>
             } @empty {
@@ -99,18 +102,25 @@ import { DataService } from '../../core/services/data.service';
 
       <div class="panel">
         <div class="panel-head">
-          <h3>📅 Upcoming Deadlines</h3>
-          <a routerLink="/deadlines" class="link">View All →</a>
+          <div><h3>Upcoming deadlines</h3><span class="panel-subtitle">Soonest first</span></div>
+          <a routerLink="/deadlines" class="link">View all →</a>
         </div>
         <ul class="deadline-list">
-          @for (d of deadlines(); track d.id) {
+          @for (d of nextDeadlines(); track d.id) {
             <li>
-              <div class="d-icon" [class]="d.type">📄</div>
-              <div class="d-body">
-                <strong>{{ d.title }}</strong>
-                <span>{{ d.projectTitle }}</span>
-              </div>
-              <span class="d-date" [class]="dateClass(d.dueDate)">{{ formatDate(d.dueDate) }}</span>
+              <a routerLink="/deadlines"
+                [queryParams]="d.type === 'task' ? { projectId: d.projectId, taskId: d.id } : { projectId: d.projectId }"
+                class="hit">
+                <div class="d-icon" [class]="d.type">DUE</div>
+                <div class="d-body">
+                  <strong>{{ d.title }}</strong>
+                  <span>{{ d.projectTitle }}</span>
+                </div>
+                <span class="d-when">
+                  <span class="d-date" [class]="dateClass(d.dueDate)">{{ formatDate(d.dueDate) }}</span>
+                  @if (d.dueTime) { <span class="d-time">{{ clock(d.dueTime) }}</span> }
+                </span>
+              </a>
             </li>
           } @empty {
             <li class="empty-summary">No deadlines in your assigned work.</li>
@@ -122,30 +132,30 @@ import { DataService } from '../../core/services/data.service';
     <div class="grid-3 bottom">
       <div class="panel">
         <div class="panel-head">
-          <h3>▣ My Projects</h3>
+          <div><h3>My projects</h3><span class="panel-subtitle">Progress by project</span></div>
           <select class="select-sm" [(ngModel)]="projectStatusFilter" aria-label="Filter projects by status">
             <option value="all">All status</option>
-            <option value="ongoing">On Going</option>
+            <option value="ongoing">In progress</option>
             <option value="completed">Completed</option>
-            <option value="on_hold">On Hold</option>
+            <option value="on_hold">On hold</option>
             <option value="overdue">Overdue</option>
           </select>
         </div>
         <ul class="project-list">
           @for (p of filteredProjects(); track p.id) {
             <li>
-              <div class="p-icon" [style.background]="p.color + '22'" [style.color]="p.color">◆</div>
-              <div class="p-body">
-                <strong>{{ p.title }}</strong>
-                <span class="status" [class]="p.status">{{ statusLabel(p.status) }}</span>
-              </div>
-              <div class="p-progress">
-                <div class="track"><div class="fill" [style.width.%]="p.progress" [style.background]="p.color"></div></div>
-                <span>{{ p.progress }}%</span>
-              </div>
-              <div class="p-avatars">
-                <span class="av">+{{ p.memberIds.length }}</span>
-              </div>
+              <a routerLink="/projects" [queryParams]="{ projectId: p.id }" class="hit project-hit">
+                <div class="p-icon" [style.color]="p.color">◆</div>
+                <div class="p-body">
+                  <strong>{{ p.title }}</strong>
+                  <span class="status" [class]="p.status">{{ statusLabel(p.status) }}</span>
+                </div>
+                <div class="p-progress">
+                  <div class="track"><div class="fill" [style.width.%]="p.progress" [style.background]="p.color"></div></div>
+                  <span>{{ p.progress }}%</span>
+                </div>
+                <div class="p-avatars"><span class="av">+{{ p.memberIds.length }}</span></div>
+              </a>
             </li>
           } @empty {
             <li class="empty-summary">No projects are assigned to your account yet.</li>
@@ -155,7 +165,7 @@ import { DataService } from '../../core/services/data.service';
 
       <div class="panel">
         <div class="panel-head">
-          <h3>⚡ Recent Activities</h3>
+          <div><h3>Recent activity</h3><span class="panel-subtitle">Latest recorded events</span></div>
           @if (isAdmin()) {
             <a routerLink="/admin" class="link">View audit →</a>
           } @else {
@@ -165,394 +175,698 @@ import { DataService } from '../../core/services/data.service';
         <ul class="activity-list">
           @for (a of recentActivities(); track a.id) {
             <li>
-              <span class="a-dot" [class]="a.type"></span>
-              <div class="a-body">
-                <p>{{ a.message }}</p>
-                <time>{{ relativeTime(a.createdAt) }}</time>
-              </div>
+              <a [routerLink]="activityRoute(a.projectId)" [queryParams]="a.projectId ? { projectId: a.projectId } : null"
+                class="hit activity-hit">
+                <span class="a-dot" [class]="a.type"></span>
+                <div class="a-body">
+                  <p>{{ a.message }}</p>
+                  <time>{{ relativeTime(a.createdAt) }}</time>
+                </div>
+              </a>
             </li>
           } @empty {
-            <li class="empty-summary">Project actions will appear here as work progresses.</li>
+            <li class="empty-summary">No recent activity</li>
           }
         </ul>
       </div>
 
-      <div class="promo">
-        <span class="promo-step">YOUR NEXT STEP</span>
-        <h3>{{ nextStepTitle() }}</h3>
-        <p>{{ nextStepDescription() }}</p>
-        <a [routerLink]="primaryRoute()" class="btn-promo">{{ primaryAction() }} →</a>
-      </div>
     </div>
   `,
   styles: [`
+    /* ------------------------------------------------------------- hero */
     .hero {
-      display: grid;
-      grid-template-columns: 1.5fr 0.8fr;
-      background: linear-gradient(120deg, #0f172a 0%, #1e3a8a 55%, #1e40af 100%);
-      border-radius: 18px;
-      overflow: hidden;
-      min-height: 180px;
-      margin-bottom: 1.25rem;
-      color: #fff;
       position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(220px, .55fr);
+      gap: 1rem;
+      min-height: 196px;
+      margin-bottom: 1rem;
+      padding: 1.6rem 1.75rem;
+      overflow: hidden;
+      border-radius: 4px;
+      border: 1px solid rgba(0, 0, 0, .25);
+      background:
+        repeating-linear-gradient(135deg, rgba(244, 237, 220, .04) 0 1px, transparent 1px 10px),
+        radial-gradient(120% 140% at 100% 0%, rgba(179, 132, 60, .18), transparent 58%),
+        linear-gradient(112deg, #17392e 0%, #14332a 48%, #0d251e 100%);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), 0 22px 40px -34px rgba(13, 36, 29, .9);
     }
+
     .hero-text {
-      padding: 1.75rem 2rem;
+      position: relative;
+      z-index: 1;
       display: flex;
       flex-direction: column;
+      align-items: flex-start;
       justify-content: center;
-      gap: 0.5rem;
-      z-index: 1;
+      gap: .55rem;
+      max-width: 46rem;
     }
+
+    .hero-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      font-family: var(--font-mono);
+      font-size: .58rem;
+      font-weight: 500;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: #d9c39a;
+    }
+
+    .hero-kicker i {
+      width: 6px;
+      height: 6px;
+      background: var(--accent);
+      border-radius: 50%;
+      box-shadow: 0 0 0 3px rgba(224, 117, 71, .2);
+    }
+
     .hero-text h1 {
-      margin: 0;
-      font-size: 1.65rem;
-      font-weight: 700;
+      font-family: var(--font-display);
+      font-size: clamp(2rem, 3.4vw, 2.9rem);
+      font-weight: 400;
+      line-height: .96;
+      letter-spacing: -.045em;
+      color: #f6efdd;
     }
-    .hero-kicker,.promo-step { font-size:.68rem; font-weight:800; letter-spacing:.14em; color:#c7d2fe; text-transform:uppercase; }
+
+    .hero-text h1 em {
+      font-style: italic;
+      font-weight: 400;
+      color: #e0b784;
+    }
+
     .hero-text p {
-      margin: 0;
-      opacity: 0.85;
-      font-size: 0.95rem;
-      max-width: 420px;
+      max-width: 42ch;
+      color: #b9c8ba;
+      font-size: .88rem;
+      line-height: 1.55;
     }
+
     .btn-cta {
       display: inline-flex;
       align-items: center;
-      margin-top: 0.75rem;
-      padding: 0.65rem 1.25rem;
-      background: #f59e0b;
-      color: #0f172a;
+      gap: .5rem;
+      margin-top: .55rem;
+      padding: .58rem 1.05rem;
+      border-radius: 3px;
+      background: #e3bb85;
+      color: #14332a;
+      font-size: .8rem;
       font-weight: 700;
-      border-radius: 999px;
-      text-decoration: none;
-      width: fit-content;
-      font-size: 0.9rem;
-      transition: transform 0.15s, box-shadow 0.15s;
+      letter-spacing: .01em;
+      transition: background .16s ease, transform .16s ease, box-shadow .16s ease;
     }
-    .btn-cta:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 8px 20px rgba(245, 158, 11, 0.4);
-    }
-    .hero-context { align-self:center; display:grid; gap:.45rem; margin:1.25rem 1.4rem 1.25rem 0; padding:1rem 1.1rem; border:1px solid rgba(255,255,255,.15); border-radius:14px; background:rgba(255,255,255,.07); backdrop-filter:blur(8px); }
-    .hero-context span { color:#c7d2fe; font-size:.65rem; font-weight:800; letter-spacing:.12em; }
-    .hero-context strong { color:#fff; font-size:1rem; }
-    .hero-context small { color:#cbd5e1; font-size:.72rem; }
 
+    .btn-cta:hover {
+      background: #f3d3a4;
+      transform: translateY(-1px);
+      box-shadow: 0 10px 22px -14px rgba(0, 0, 0, .8);
+    }
+
+    .cta-arrow { font-size: .95rem; transition: transform .16s ease; }
+    .btn-cta:hover .cta-arrow { transform: translateX(3px); }
+
+    .hero-context {
+      position: relative;
+      z-index: 1;
+      align-self: stretch;
+      display: flex;
+      flex-direction: column;
+      gap: .3rem;
+      padding: 1.05rem 1.1rem;
+      border: 1px solid rgba(244, 237, 220, .22);
+      border-radius: 3px;
+      background: rgba(6, 20, 15, .32);
+    }
+
+    .hero-context > span {
+      font-family: var(--font-mono);
+      font-size: .54rem;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: #9db49d;
+    }
+
+    .hero-context > strong {
+      font-family: var(--font-display);
+      font-size: 1.15rem;
+      font-weight: 400;
+      letter-spacing: -.02em;
+      color: #f6efdd;
+      line-height: 1.15;
+    }
+
+    .hero-context > small {
+      font-size: .72rem;
+      line-height: 1.4;
+      color: #93a894;
+    }
+
+    .stamp {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      margin-top: auto;
+      padding-top: .7rem;
+      border-top: 1px solid rgba(244, 237, 220, .16);
+    }
+
+    .stamp b {
+      font-family: var(--font-display);
+      font-size: 1.9rem;
+      font-weight: 400;
+      line-height: 1;
+      color: #e3bb85;
+    }
+
+    .stamp span {
+      font-family: var(--font-mono);
+      font-size: .53rem;
+      letter-spacing: .13em;
+      line-height: 1.5;
+      text-transform: uppercase;
+      color: #9db49d;
+    }
+
+    /* ------------------------------------------------------------ stats */
     .stats {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
-      gap: 1rem;
-      margin-bottom: 1.25rem;
-    }
-    .stat {
-      border-radius: 16px;
-      padding: 1.15rem 1.25rem;
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      color: #fff;
-      box-shadow: 0 4px 14px rgba(0,0,0,0.08);
-    }
-    .card-blue { background: linear-gradient(135deg, #2563eb, #3b82f6); }
-    .card-green { background: linear-gradient(135deg, #059669, #10b981); }
-    .card-orange { background: linear-gradient(135deg, #d97706, #f59e0b); }
-    .card-purple { background: linear-gradient(135deg, #7c3aed, #8b5cf6); }
-    .stat-icon {
-      width: 44px;
-      height: 44px;
-      border-radius: 12px;
-      background: rgba(255,255,255,0.2);
-      display: grid;
-      place-items: center;
-      font-size: 1.2rem;
-    }
-    .stat-value {
-      font-size: 1.6rem;
-      font-weight: 800;
-      line-height: 1.1;
-    }
-    .stat-label { font-size: 0.85rem; opacity: 0.9; }
-    .delta { font-size: 0.75rem; font-weight: 600; margin-left: 0.25rem; }
-    .delta.up { color: #bbf7d0; }
-
-    .grid-3 {
-      display: grid;
-      grid-template-columns: 1.3fr 1fr 1fr;
-      gap: 1rem;
-      margin-bottom: 1.25rem;
-    }
-    .grid-3.bottom { grid-template-columns: 1.2fr 1.1fr 0.9fr; }
-
-    .panel {
-      background: #fff;
-      border-radius: 16px;
-      padding: 1.15rem 1.25rem;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-      border: 1px solid #e2e8f0;
-    }
-    .panel-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      gap: .75rem;
       margin-bottom: 1rem;
     }
-    .panel-head h3 {
-      margin: 0;
-      font-size: 0.95rem;
-      font-weight: 700;
-      color: #0f172a;
+
+    .stat {
+      position: relative;
+      display: block;
+      padding: 1rem 1.05rem .9rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      transition: border-color .18s ease, transform .18s ease;
     }
-    .panel-subtitle { display:block; margin-top:.22rem; color:#64748b; font-size:.72rem; }
-    .status-summary { display:grid; gap:.95rem; padding:.25rem 0; }
-    .status-line > div:first-child { display:flex; align-items:center; gap:.45rem; color:#475569; font-size:.8rem; }
-    .status-line strong { margin-left:auto; color:#0f172a; font-size:.8rem; }
-    .status-indicator { width:8px; height:8px; border-radius:50%; background:#6366f1; }
-    .status-indicator.on_hold { background:#f59e0b; }
-    .status-indicator.completed { background:#10b981; }
-    .status-indicator.overdue { background:#ef4444; }
-    .status-track { height:6px; margin-top:.42rem; overflow:hidden; border-radius:999px; background:#eef2f7; }
-    .status-track span { display:block; height:100%; min-width:0; border-radius:inherit; background:#6366f1; }
-    .status-track span.on_hold { background:#f59e0b; }
-    .status-track span.completed { background:#10b981; }
-    .status-track span.overdue { background:#ef4444; }
-    .link {
-      font-size: 0.8rem;
-      color: #2563eb;
-      text-decoration: none;
+
+    .stat:hover { border-color: var(--line-strong); transform: translateY(-2px); }
+
+    .stat-index {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: .55rem;
+      letter-spacing: .16em;
+      color: var(--muted);
+      margin-bottom: .7rem;
+    }
+
+    .stat-value {
+      font-family: var(--font-display);
+      font-size: 2.25rem;
+      font-weight: 400;
+      line-height: .9;
+      letter-spacing: -.045em;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-label {
+      margin-top: .45rem;
+      font-size: .74rem;
       font-weight: 500;
-    }
-    .select-sm {
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 0.25rem 0.5rem;
-      font-size: 0.8rem;
-      background: #f8fafc;
+      letter-spacing: .01em;
+      color: var(--muted);
     }
 
-    .chart-bars {
-      display: flex;
-      align-items: flex-end;
-      justify-content: space-between;
-      height: 140px;
-      gap: 0.5rem;
-      padding: 0 0.25rem;
+    .stat-rule {
+      position: absolute;
+      left: 1.05rem;
+      right: 1.05rem;
+      bottom: 0;
+      height: 2px;
+      background: var(--moss);
+      transform: scaleX(.28);
+      transform-origin: left;
+      transition: transform .3s cubic-bezier(.3, .8, .2, 1);
     }
-    .bar-group { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.35rem; }
-    .bars { display: flex; align-items: flex-end; gap: 3px; height: 120px; }
-    .bar { width: 10px; border-radius: 4px 4px 0 0; min-height: 4px; }
-    .bar.ongoing { background: #3b82f6; }
-    .bar.completed { background: #10b981; }
-    .bar.overdue { background: #ef4444; }
-    .bar-label { font-size: 0.7rem; color: #64748b; }
-    .legend {
-      display: flex;
+
+    .stat:hover .stat-rule { transform: scaleX(1); }
+    .card-green .stat-rule { background: var(--accent-2); }
+    .card-orange .stat-rule { background: var(--accent); }
+    .card-purple .stat-rule { background: var(--ink-soft); }
+
+    /* ------------------------------------------------------------ layout */
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr 1fr;
       gap: 1rem;
-      margin-top: 0.75rem;
-      font-size: 0.75rem;
-      color: #64748b;
+      margin-bottom: 1rem;
     }
-    .dot {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      margin-right: 0.3rem;
-    }
-    .dot.blue { background: #3b82f6; }
-    .dot.green { background: #10b981; }
-    .dot.red { background: #ef4444; }
 
-    .donut-wrap {
+    .grid-3.bottom { grid-template-columns: 1.25fr 1.05fr .85fr; }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      padding: 1.05rem 1.15rem 1.15rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+    }
+
+    .grid-3 > .panel { min-height: 100%; }
+
+    /* ------------------------------------------------------- project status */
+    .status-summary { display: grid; gap: .95rem; padding: .35rem 0 .2rem; }
+
+    .status-line > div:first-child {
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: .45rem;
+      font-size: .78rem;
+      color: var(--ink-soft);
     }
+
+    .status-line strong {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: .72rem;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .status-indicator { width: 7px; height: 7px; border-radius: 50%; background: var(--moss); }
+    .status-indicator.on_hold { background: var(--ochre); }
+    .status-indicator.completed { background: var(--rail); }
+    .status-indicator.overdue { background: var(--accent); }
+
+    .status-track { height: 3px; margin-top: .4rem; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+    .status-track span { display: block; height: 100%; background: var(--moss); }
+    .status-track span.on_hold { background: var(--ochre); }
+    .status-track span.completed { background: var(--rail); }
+    .status-track span.overdue { background: var(--accent); }
+
+    :host-context([data-theme='dark']) .status-track span.completed { background: var(--ochre); }
+
+    /* --------------------------------------------------------- workload */
+    .donut-wrap { display: flex; align-items: center; gap: 1rem; flex: 1; }
+
     .donut {
-      width: 120px;
-      height: 120px;
-      border-radius: 50%;
-      border: 7px solid #dfe3ff;
-      background: var(--surface, #fff);
+      position: relative;
+      width: 104px;
+      height: 104px;
+      flex: 0 0 104px;
       display: grid;
       place-items: center;
-      flex-shrink: 0;
-    }
-    .donut-center {
-      width: 72px;
-      height: 72px;
       border-radius: 50%;
-      background: var(--surface, #fff);
+      background: var(--surface-2);
+      box-shadow: inset 0 0 0 1px var(--border);
+    }
+
+    .donut::before {
+      content: '';
+      position: absolute;
+      inset: 7px;
+      border-radius: 50%;
+      background: var(--surface);
+      box-shadow: inset 0 0 0 1px var(--border);
+    }
+
+    .donut::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 1px dashed var(--line-strong);
+      opacity: .55;
+    }
+
+    .donut-center {
+      position: relative;
+      z-index: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      line-height: 1.05;
     }
-    .donut-center strong { font-size: 1.15rem; color: var(--text, #0f172a); }
-    .donut-center span { font-size: 0.65rem; color: #64748b; }
-    .workload-list {
-      list-style: none;
-      padding: 0;
-      margin: 0;
-      flex: 1;
-      font-size: 0.8rem;
+
+    .donut-center strong {
+      font-family: var(--font-display);
+      font-size: 1.6rem;
+      font-weight: 400;
+      letter-spacing: -.04em;
+      color: var(--text);
     }
+
+    .donut-center span {
+      font-family: var(--font-mono);
+      font-size: .5rem;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .workload-list { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; }
+
     .workload-list li {
       display: flex;
       align-items: center;
-      gap: 0.4rem;
-      padding: 0.3rem 0;
-      color: #334155;
+      gap: .45rem;
+      padding: .32rem 0;
+      border-bottom: 1px dotted var(--border);
+      font-size: .76rem;
+      color: var(--ink-soft);
     }
-    .workload-list strong { margin-left: auto; color: #0f172a; }
-    .workload-list .empty-summary { color:#64748b; font-size:.78rem; }
-    .empty-summary { padding:.85rem 0; color:#64748b; font-size:.8rem; }
 
-    .deadline-list, .project-list, .activity-list {
-      list-style: none;
-      padding: 0;
-      margin: 0;
-    }
-    .deadline-list li {
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.7rem 0;
-      border-bottom: 1px solid #f1f5f9;
-    }
-    .deadline-list li:last-child { border-bottom: none; }
-    .d-icon {
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      background: #eff6ff;
-      display: grid;
-      place-items: center;
-      font-size: 0.9rem;
-    }
-    .d-body { flex: 1; min-width: 0; }
-    .d-body strong { display: block; font-size: 0.85rem; color: #0f172a; }
-    .d-body span { font-size: 0.75rem; color: #64748b; }
-    .d-date {
-      font-size: 0.72rem;
-      font-weight: 600;
-      padding: 0.2rem 0.5rem;
-      border-radius: 6px;
+    .workload-list li:last-child { border-bottom: 0; }
+    .w-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .workload-list strong {
+      margin-left: auto;
+      font-family: var(--font-mono);
+      font-size: .64rem;
+      font-weight: 500;
+      color: var(--text);
       white-space: nowrap;
     }
-    .d-date.soon { background: #fef2f2; color: #b91c1c; }
-    .d-date.mid { background: #fff7ed; color: #c2410c; }
-    .d-date.later { background: #eff6ff; color: #1d4ed8; }
 
-    .project-list li {
+    .empty-summary { padding: .9rem 0; color: var(--muted); font-size: .78rem; }
+
+    /* --------------------------------------------------------- deadlines */
+    .deadline-list, .project-list, .activity-list { list-style: none; margin: 0; padding: 0; flex: 1; }
+
+    .deadline-list li,
+    .project-list li,
+    .activity-list li { border-bottom: 1px solid var(--border); }
+
+    .deadline-list li:last-child,
+    .project-list li:last-child,
+    .activity-list li:last-child { border-bottom: 0; }
+
+    .hit {
+      display: flex;
+      align-items: center;
+      gap: .7rem;
+      padding: .62rem .45rem;
+      margin: 0 -.45rem;
+      border-radius: 2px;
+      transition: background-color .14s ease, box-shadow .14s ease;
+    }
+
+    .hit:hover { background: var(--hover); box-shadow: inset 2px 0 0 var(--accent); }
+    .hit:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+    .d-icon {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 34px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      background: var(--surface-2);
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: .5rem;
+      font-weight: 500;
+      letter-spacing: .06em;
+    }
+
+    .d-body { flex: 1; min-width: 0; }
+
+    .d-body strong {
+      display: block;
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .d-body span { font-size: .7rem; color: var(--muted); }
+
+    .d-when {
+      display: grid;
+      justify-items: end;
+      gap: .05rem;
+      flex: 0 0 auto;
+    }
+
+    .d-date {
+      font-family: var(--font-mono);
+      font-size: .58rem;
+      letter-spacing: .04em;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .d-time {
+      font-family: var(--font-mono);
+      font-size: .56rem;
+      letter-spacing: .06em;
+      color: var(--ink-soft);
+      white-space: nowrap;
+    }
+
+    .d-date.soon { color: var(--danger); }
+    .d-date.mid { color: var(--ochre); }
+    .d-date.later { color: var(--muted); }
+
+    /* ---------------------------------------------------------- projects */
+    .project-hit {
       display: grid;
       grid-template-columns: auto 1fr auto auto;
       align-items: center;
-      gap: 0.75rem;
-      padding: 0.75rem 0;
-      border-bottom: 1px solid #f1f5f9;
+      gap: .7rem;
+      padding: .65rem .45rem;
+      margin: 0 -.45rem;
     }
+
     .p-icon {
-      width: 38px;
-      height: 38px;
-      border-radius: 10px;
+      width: 30px;
+      height: 30px;
       display: grid;
       place-items: center;
-      font-size: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      background: var(--surface-2);
+      font-size: .7rem;
     }
-    .p-body strong { display: block; font-size: 0.85rem; color: #0f172a; }
-    .status {
-      font-size: 0.7rem;
+
+    .p-body { min-width: 0; }
+
+    .p-body strong {
+      display: block;
+      font-size: .8rem;
       font-weight: 600;
-      padding: 0.15rem 0.45rem;
-      border-radius: 999px;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
-    .status.ongoing { background: #dcfce7; color: #166534; }
-    .status.on_hold { background: #ffedd5; color: #9a3412; }
-    .status.completed { background: #dbeafe; color: #1e40af; }
+
+    .status {
+      display: inline-block;
+      margin-top: .2rem;
+      font-family: var(--font-mono);
+      font-size: .52rem;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .status.ongoing { color: var(--moss); }
+    .status.on_hold { color: var(--ochre); }
+    .status.completed { color: var(--rail); }
+    .status.overdue { color: var(--danger); }
+
+    :host-context([data-theme='dark']) .status.completed { color: var(--ochre); }
+
     .p-progress {
       display: flex;
       align-items: center;
-      gap: 0.4rem;
-      font-size: 0.75rem;
-      color: #64748b;
-      min-width: 80px;
+      gap: .4rem;
+      min-width: 86px;
+      font-family: var(--font-mono);
+      font-size: .58rem;
+      color: var(--muted);
     }
-    .track {
-      width: 56px;
-      height: 6px;
-      background: #e2e8f0;
-      border-radius: 999px;
-      overflow: hidden;
-    }
-    .fill { height: 100%; border-radius: 999px; }
+
+    .track { width: 52px; height: 3px; background: var(--surface-2); border-radius: 999px; overflow: hidden; }
+    .fill { height: 100%; }
+
     .p-avatars .av {
-      font-size: 0.7rem;
-      background: #f1f5f9;
-      padding: 0.2rem 0.45rem;
-      border-radius: 999px;
-      color: #475569;
+      display: grid;
+      place-items: center;
+      min-width: 26px;
+      height: 22px;
+      padding: 0 .3rem;
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: .55rem;
     }
 
-    .activity-list li {
+    /* ---------------------------------------------------------- activity */
+    .activity-hit {
       display: flex;
-      gap: 0.75rem;
-      padding: 0.65rem 0;
-      border-bottom: 1px solid #f1f5f9;
+      align-items: flex-start;
+      gap: .65rem;
+      padding: .6rem .45rem;
+      margin: 0 -.45rem;
     }
-    .a-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      margin-top: 0.35rem;
-      flex-shrink: 0;
-    }
-    .a-dot.task_assigned { background: #3b82f6; }
-    .a-dot.file_uploaded { background: #10b981; }
-    .a-dot.comment { background: #f59e0b; }
-    .a-dot.status_update { background: #8b5cf6; }
-    .a-body p { margin: 0; font-size: 0.82rem; color: #334155; line-height: 1.35; }
-    .a-body time { font-size: 0.72rem; color: #94a3b8; }
 
+    .a-dot { margin-top: .4rem; background: var(--moss); }
+    .a-dot.task_assigned { background: var(--rail); }
+    .a-dot.file_uploaded { background: var(--ochre); }
+    .a-dot.file_downloaded { background: var(--moss); }
+    .a-dot.comment { background: var(--accent-2); }
+    .a-dot.status_update { background: var(--accent); }
+
+    .a-body p { font-size: .78rem; line-height: 1.4; color: var(--ink-soft); }
+
+    .a-body time {
+      display: block;
+      margin-top: .15rem;
+      font-family: var(--font-mono);
+      font-size: .55rem;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    /* ------------------------------------------------------------- promo */
     .promo {
-      background: linear-gradient(145deg, #0f172a, #1e3a8a);
-      border-radius: 16px;
-      padding: 1.5rem;
-      color: #fff;
+      position: relative;
       display: flex;
       flex-direction: column;
       justify-content: center;
-      gap: 0.75rem;
+      gap: .5rem;
+      padding: 1.35rem;
+      overflow: hidden;
+      border-radius: 4px;
+      border: 1px solid rgba(0, 0, 0, .25);
+      background:
+        repeating-linear-gradient(135deg, rgba(244, 237, 220, .04) 0 1px, transparent 1px 10px),
+        linear-gradient(150deg, #17392e 0%, #14332a 60%, #0d251e 100%);
+      color: #f4eddc;
     }
-    .promo h3 { margin: 0; font-size: 1.15rem; }
-    .promo p { margin: 0; opacity: 0.85; font-size: 0.9rem; }
-    .btn-promo {
-      display: inline-flex;
-      margin-top: 0.5rem;
-      padding: 0.6rem 1.1rem;
-      background: #3b82f6;
-      color: #fff;
-      border-radius: 999px;
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 0.85rem;
-      width: fit-content;
-    }
-    .promo-step { color:#c7d2fe; }
 
-    @media (max-width: 1100px) {
+    .promo-step {
+      font-family: var(--font-mono);
+      font-size: .55rem;
+      font-weight: 500;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: #d9c39a;
+    }
+
+    .promo h3 {
+      font-family: var(--font-display);
+      font-size: 1.05rem;
+      font-weight: 400;
+      line-height: 1.2;
+      letter-spacing: -.025em;
+      color: #f6efdd;
+    }
+
+    .flow-list {
+      list-style: none;
+      margin: .2rem 0 0;
+      padding: 0;
+    }
+
+    .flow-list li + li a { border-top: 1px solid rgba(244, 237, 220, .13); }
+
+    .flow-list a {
+      display: grid;
+      grid-template-columns: 1.4rem minmax(0, 1fr) auto;
+      align-items: center;
+      gap: .6rem;
+      padding: .48rem .3rem;
+      border-radius: 2px;
+      color: #f4eddc;
+      transition: background-color .14s ease;
+    }
+
+    .flow-list a:hover { background: rgba(244, 237, 220, .08); }
+
+    .flow-num {
+      display: grid;
+      place-items: center;
+      width: 1.4rem;
+      height: 1.4rem;
+      border: 1px solid rgba(227, 187, 133, .42);
+      border-radius: 2px;
+      font-family: var(--font-mono);
+      font-size: .55rem;
+      color: #e3bb85;
+    }
+
+    .flow-copy {
+      display: flex;
+      flex-direction: column;
+      gap: .04rem;
+      min-width: 0;
+    }
+
+    .flow-copy strong {
+      font-size: .75rem;
+      font-weight: 600;
+      color: #f6efdd;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .flow-copy small {
+      font-family: var(--font-mono);
+      font-size: .52rem;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      color: #a9bcab;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .flow-arrow { color: #e3bb85; font-size: .8rem; opacity: .7; }
+    .flow-list a:hover .flow-arrow { opacity: 1; }
+
+    /* --------------------------------------------------------- responsive */
+    @media (max-width: 1180px) {
+      .grid-3,
+      .grid-3.bottom { grid-template-columns: 1fr 1fr; }
+      .grid-3.bottom > .promo { grid-column: span 2; }
+    }
+
+    @media (max-width: 1000px) {
+      .hero { grid-template-columns: 1fr; padding: 1.4rem; }
+      .hero-context { display: none; }
+    }
+
+    @media (max-width: 900px) {
       .stats { grid-template-columns: repeat(2, 1fr); }
-      .grid-3, .grid-3.bottom { grid-template-columns: 1fr; }
-      .hero { grid-template-columns: 1fr; }
-      .hero-art { min-height: 100px; }
+      .grid-3,
+      .grid-3.bottom { grid-template-columns: 1fr; }
+      .grid-3.bottom > .promo { grid-column: auto; }
+      .hero-text h1 { font-size: 1.9rem; }
+    }
+
+    @media (max-width: 560px) {
+      .stats { grid-template-columns: 1fr; }
+      .donut-wrap { flex-direction: column; align-items: flex-start; }
+      .workload-list { width: 100%; }
     }
   `]
 })
 export class DashboardComponent {
   private readonly auth = inject(AuthService);
   readonly data = inject(DataService);
-  colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899'];
+  colors = ['#14332a', '#b04a2c', '#b3843c', '#4c6b4f', '#6b6c59', '#8a5b3a'];
   isStudent = computed(() => this.auth.hasRole('student'));
   isLeader = computed(() => this.auth.hasRole('project_leader'));
   isAdviser = computed(() => this.auth.hasRole('adviser'));
@@ -561,6 +875,8 @@ export class DashboardComponent {
   workload = this.data.workload;
   deadlines = this.data.deadlines;
   activities = this.data.activities;
+  /** The dashboard shows the nearest dates only; the Deadlines page holds the full list. */
+  readonly nextDeadlines = computed(() => this.deadlines().slice(0, 6));
   projectStatusFilter = 'all';
 
   myProjects = computed(() => {
@@ -597,13 +913,6 @@ export class DashboardComponent {
     return 'Student';
   }
 
-  roleDescription(): string {
-    if (this.isAdmin()) return 'Manage user access, review system activity, and keep SPMS settings current.';
-    if (this.isAdviser()) return 'Review your assigned projects, check participation, and guide teams with feedback.';
-    if (this.isLeader()) return 'Build your project team, assign work, and keep progress and deadlines on track.';
-    return 'Pick up your assigned tasks, watch deadlines, and keep your project team moving.';
-  }
-
   primaryRoute(): string {
     if (this.isAdmin()) return '/admin';
     if (this.isAdviser()) return '/adviser';
@@ -618,18 +927,25 @@ export class DashboardComponent {
     return 'Continue my tasks';
   }
 
-  nextStepTitle(): string {
-    if (this.isAdmin()) return 'Review access and recent changes';
-    if (this.isAdviser()) return 'Review a team’s progress';
-    if (this.isLeader()) return 'Check the team’s open work';
-    return 'Update your next task';
+  projectsRoute(): string {
+    return '/projects';
   }
 
-  nextStepDescription(): string {
-    if (this.isAdmin()) return 'Keep accounts, registration, and academic settings up to date.';
-    if (this.isAdviser()) return 'Open your assigned projects to check progress and leave feedback.';
-    if (this.isLeader()) return 'Balance assignments and review each member’s contribution.';
-    return 'Update task status and upload project files when your work is ready.';
+  taskRoute(): string {
+    return '/tasks';
+  }
+
+  peopleRoute(): string {
+    if (this.isAdmin()) return '/admin';
+    if (this.isLeader()) return '/workload';
+    return '/contributions';
+  }
+
+  activityRoute(projectId?: string): string {
+    if (projectId) return this.isAdviser() ? '/adviser' : '/projects';
+    if (this.isAdmin()) return '/admin';
+    if (this.isAdviser()) return '/adviser';
+    return '/projects';
   }
 
   academicPeriod(): string {
@@ -685,8 +1001,8 @@ export class DashboardComponent {
   }
 
   statusLabel(s: string): string {
-    if (s === 'on_hold') return 'On Hold';
-    if (s === 'ongoing') return 'On Going';
+    if (s === 'on_hold') return 'On hold';
+    if (s === 'ongoing') return 'In progress';
     return s.charAt(0).toUpperCase() + s.slice(1);
   }
 
@@ -700,6 +1016,10 @@ export class DashboardComponent {
     if (days < 7) return 'soon';
     if (days < 14) return 'mid';
     return 'later';
+  }
+
+  clock(value?: string): string {
+    return formatTime(value);
   }
 
   relativeTime(iso: string): string {

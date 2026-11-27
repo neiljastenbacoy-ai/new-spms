@@ -9,6 +9,7 @@ import {
   onSnapshot,
   orderBy,
   query,
+  updateDoc,
   where,
   writeBatch,
   type DocumentData,
@@ -17,6 +18,7 @@ import {
 } from 'firebase/firestore';
 import {
   Activity,
+  AppNotification,
   AuditRecord,
   ContributionSummary,
   DeadlineItem,
@@ -24,15 +26,21 @@ import {
   Project,
   SystemSettings,
   Task,
+  TaskComment,
   User
 } from '../models/models';
 import { AuthService } from './auth.service';
 import { LocalFileStoreService } from './local-file-store.service';
 import { firestore } from '../firebase.config';
+import { dueSortKey, formatTime, isValidTime } from '../utils/date-time';
 
 const PROJECT_QUERY_LIMIT = 30;
 const FIRESTORE_BATCH_LIMIT = 450;
 export const MAX_SHARED_FILE_BYTES = 500 * 1024;
+/** Written justification required before an account can be promoted to administrator. */
+export const MIN_ADMIN_PROMOTION_REASON = 10;
+export const MAX_TASK_COMMENT_LENGTH = 2000;
+const DAY_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   academicYear: '',
   semester: '',
@@ -50,6 +58,8 @@ export class DataService {
   private readonly _localFiles = signal<FileItem[]>([]);
   private readonly _auditLogs = signal<AuditRecord[]>([]);
   private readonly _systemSettings = signal<SystemSettings>(DEFAULT_SYSTEM_SETTINGS);
+  private readonly _taskComments = signal<TaskComment[]>([]);
+  private readonly _notifications = signal<AppNotification[]>([]);
 
   readonly projects = this._projects.asReadonly();
   readonly tasks = this._tasks.asReadonly();
@@ -60,6 +70,12 @@ export class DataService {
   readonly localFiles = this._localFiles.asReadonly();
   readonly auditLogs = this._auditLogs.asReadonly();
   readonly systemSettings = this._systemSettings.asReadonly();
+  readonly taskComments = this._taskComments.asReadonly();
+  readonly notifications = this._notifications.asReadonly();
+
+  readonly unreadNotificationCount = computed(
+    () => this._notifications().filter(notification => !notification.read).length
+  );
 
   readonly visibleTeamMembers = computed(() => {
     const user = this.auth.user();
@@ -167,6 +183,18 @@ export class DataService {
             error => console.error('Unable to load administrative audit records.', error)
           )
         : null;
+      const notificationsUnsubscribe = onSnapshot(
+        query(
+          collection(firestore, 'notifications'),
+          where('userId', '==', currentUser.id),
+          limit(50)
+        ),
+        snapshot => this._notifications.set(
+          this.mapDocuments<AppNotification>(snapshot.docs)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        ),
+        error => console.error('Unable to load account notifications.', error)
+      );
 
       const projectsCollection = collection(firestore, 'projects');
       const projectsQuery = currentUser.role === 'admin'
@@ -198,6 +226,11 @@ export class DataService {
           this.listenProjectCollection<FileItem>('files', ids, stopRelatedListeners, rows => {
             this._files.set(rows);
           });
+          this.listenProjectCollection<TaskComment>('taskComments', ids, stopRelatedListeners, rows => {
+            this._taskComments.set(
+              rows.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+            );
+          });
           const requestId = ++localFilesRequest;
           void this.loadLocalFiles(
             currentUser.id,
@@ -208,7 +241,7 @@ export class DataService {
         error => console.error('Unable to load projects from Firestore.', error)
       );
 
-      relatedUnsubscribers.push(projectUnsubscribe, directoryUnsubscribe, settingsUnsubscribe);
+      relatedUnsubscribers.push(projectUnsubscribe, directoryUnsubscribe, settingsUnsubscribe, notificationsUnsubscribe);
       if (auditUnsubscribe) relatedUnsubscribers.push(auditUnsubscribe);
       onCleanup(() => {
         disposed = true;
@@ -230,6 +263,12 @@ export class DataService {
 
   async addProject(project: Omit<Project, 'id' | 'createdAt'>): Promise<void> {
     const actor = this.requireUser();
+    if (actor.role !== 'project_leader') {
+      throw new Error('Only project leaders can create projects.');
+    }
+    if (project.leaderId !== actor.id) {
+      throw new Error('The signed-in project leader must own the project.');
+    }
     const createdAt = new Date().toISOString().slice(0, 10);
     const batch = writeBatch(firestore);
     batch.set(doc(collection(firestore, 'projects')), { ...project, createdAt });
@@ -247,6 +286,10 @@ export class DataService {
     const task = this._tasks().find(item => item.id === taskId);
     if (!task) throw new Error('Task is no longer available.');
     const user = this.requireUser();
+    const project = this._projects().find(item => item.id === task.projectId);
+    if (task.assigneeId !== user.id && project?.leaderId !== user.id) {
+      throw new Error('Only the assignee or project leader can change task status.');
+    }
     const batch = writeBatch(firestore);
     batch.update(doc(firestore, 'tasks', taskId), {
       status,
@@ -269,8 +312,140 @@ export class DataService {
     await batch.commit();
   }
 
+  /**
+   * Students own the priority and due date of work assigned to them.
+   * Leaders and admins may adjust any task inside a project they control.
+   */
+  async updateTaskDetails(
+    taskId: string,
+    changes: Pick<Task, 'priority' | 'dueDate'> & { dueTime?: string }
+  ): Promise<void> {
+    const actor = this.requireUser();
+    const task = this._tasks().find(item => item.id === taskId);
+    if (!task) throw new Error('Task is no longer available.');
+
+    const project = this._projects().find(item => item.id === task.projectId);
+    const canAdjust =
+      project?.leaderId === actor.id
+      || task.assigneeId === actor.id;
+    if (!canAdjust) throw new Error('You can only adjust tasks assigned to you.');
+
+    if (!DAY_KEY.test(changes.dueDate)) throw new Error('Choose a valid due date.');
+    if (changes.dueTime !== undefined && changes.dueTime !== '' && !isValidTime(changes.dueTime)) {
+      throw new Error('Choose a valid due time.');
+    }
+    const priority: Task['priority'] = changes.priority;
+    if (priority !== 'low' && priority !== 'medium' && priority !== 'high') {
+      throw new Error('Choose a valid priority.');
+    }
+
+    // Students may only change priority and date under the Firestore rules, so the
+    // optional time is written only when the caller supplies one (leaders/admins).
+    const update: Partial<Task> = { priority, dueDate: changes.dueDate };
+    if (changes.dueTime !== undefined) update.dueTime = changes.dueTime;
+    const clock = formatTime(changes.dueTime);
+    const dueLabel = `${changes.dueDate}${clock ? ` at ${clock}` : ''}`;
+
+    const batch = writeBatch(firestore);
+    batch.update(doc(firestore, 'tasks', taskId), update);
+    batch.set(doc(collection(firestore, 'activities')), {
+      projectId: task.projectId,
+      userId: actor.id,
+      type: 'status_update',
+      message: `Adjusted “${task.title}”: ${priority} priority, due ${dueLabel}`,
+      createdAt: new Date().toISOString()
+    });
+    batch.set(doc(collection(firestore, 'auditLogs')), this.auditEntry(
+      actor,
+      'task.details_updated',
+      taskId,
+      task.title,
+      `Set “${task.title}” to ${priority} priority with a due date of ${dueLabel}.`
+    ));
+    await batch.commit();
+  }
+
+  /** Adviser feedback on a single task. Closes once the due date has passed. */
+  async addTaskComment(taskId: string, body: string): Promise<void> {
+    const actor = this.requireUser();
+    const text = body.trim();
+    if (!text) throw new Error('Write a comment before submitting.');
+    if (text.length > MAX_TASK_COMMENT_LENGTH) {
+      throw new Error(`Comments must be ${MAX_TASK_COMMENT_LENGTH} characters or fewer.`);
+    }
+
+    const task = this._tasks().find(item => item.id === taskId);
+    if (!task) throw new Error('Task is no longer available.');
+    const project = this._projects().find(item => item.id === task.projectId);
+    if (!project) throw new Error('You do not have access to this project.');
+
+    const canReview =
+      project.leaderId === actor.id
+      || project.adviserId === actor.id;
+    if (!canReview) throw new Error('Only advisers and project leaders can comment on tasks.');
+
+    if (task.dueDate < new Date().toISOString().slice(0, 10)) {
+      throw new Error('Review is closed: this task is past its due date.');
+    }
+
+    const comment: TaskComment = {
+      id: crypto.randomUUID(),
+      taskId,
+      projectId: task.projectId,
+      authorId: actor.id,
+      authorName: actor.name,
+      authorRole: actor.role,
+      body: text,
+      createdAt: new Date().toISOString()
+    };
+
+    const batch = writeBatch(firestore);
+    batch.set(doc(firestore, 'taskComments', comment.id), comment);
+    batch.set(doc(collection(firestore, 'activities')), {
+      projectId: task.projectId,
+      userId: actor.id,
+      type: 'comment',
+      message: `${actor.name} commented on ${task.title}`,
+      createdAt: comment.createdAt
+    });
+    await batch.commit();
+    this._taskComments.update(rows =>
+      [...rows.filter(row => row.id !== comment.id), comment]
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    );
+  }
+
+  async markNotificationRead(notificationId: string): Promise<void> {
+    const notification = this._notifications().find(item => item.id === notificationId);
+    if (!notification || notification.read) return;
+    await updateDoc(doc(firestore, 'notifications', notificationId), { read: true });
+    this._notifications.update(rows =>
+      rows.map(row => (row.id === notificationId ? { ...row, read: true } : row))
+    );
+  }
+
+  async markAllNotificationsRead(): Promise<void> {
+    const unread = this._notifications().filter(notification => !notification.read);
+    if (!unread.length) return;
+    const batch = writeBatch(firestore);
+    unread.forEach(notification =>
+      batch.update(doc(firestore, 'notifications', notification.id), { read: true })
+    );
+    await batch.commit();
+    this._notifications.update(rows =>
+      rows.map(row => ({ ...row, read: true }))
+    );
+  }
+
   async addTask(task: Omit<Task, 'id' | 'createdAt'>): Promise<void> {
     const user = this.requireUser();
+    const project = this._projects().find(item => item.id === task.projectId);
+    if (user.role !== 'project_leader' || project?.leaderId !== user.id) {
+      throw new Error('Only the project leader can assign tasks.');
+    }
+    if (!(project.memberIds ?? []).includes(task.assigneeId) && project.leaderId !== task.assigneeId) {
+      throw new Error('Choose a member of this project as the assignee.');
+    }
     const createdAt = new Date().toISOString().slice(0, 10);
     const batch = writeBatch(firestore);
     const taskReference = doc(collection(firestore, 'tasks'));
@@ -295,6 +470,17 @@ export class DataService {
   async updateProject(projectId: string, changes: Partial<Project>): Promise<void> {
     const actor = this.requireUser();
     const project = this._projects().find(item => item.id === projectId);
+    if (!project) throw new Error('Project is no longer available.');
+    const isProjectLeader = actor.role === 'project_leader' && project.leaderId === actor.id;
+    const isAssignedAdviser = actor.role === 'adviser' && project.adviserId === actor.id;
+    const allowedAdviserChanges = ['status', 'progress', 'feedback'];
+    const adviserOnlyChange =
+      isAssignedAdviser &&
+      Object.keys(changes).length > 0 &&
+      Object.keys(changes).every(key => allowedAdviserChanges.includes(key));
+    if (!isProjectLeader && !adviserOnlyChange) {
+      throw new Error('Only the project leader or assigned adviser can update this project.');
+    }
     const batch = writeBatch(firestore);
     batch.update(doc(firestore, 'projects', projectId), changes);
     batch.set(doc(collection(firestore, 'auditLogs')), this.auditEntry(
@@ -310,6 +496,11 @@ export class DataService {
   async addProjectFeedback(projectId: string, feedback: string): Promise<void> {
     const actor = this.requireUser();
     const project = this._projects().find(item => item.id === projectId);
+    if (!project || (actor.role !== 'adviser' && actor.role !== 'project_leader') ||
+      (actor.role === 'adviser' && project.adviserId !== actor.id) ||
+      (actor.role === 'project_leader' && project.leaderId !== actor.id)) {
+      throw new Error('Only the assigned adviser or project leader can add project feedback.');
+    }
     const batch = writeBatch(firestore);
     batch.update(doc(firestore, 'projects', projectId), {
       feedback: arrayUnion(feedback)
@@ -327,19 +518,19 @@ export class DataService {
   async deleteProject(projectId: string): Promise<void> {
     const actor = this.requireUser();
     const project = this._projects().find(item => item.id === projectId);
-    const relatedTasks = this._tasks().filter(task => task.projectId === projectId);
-    const relatedFiles = await getDocs(query(
-      collection(firestore, 'files'),
-      where('projectId', '==', projectId)
+    if (actor.role !== 'project_leader' || project?.leaderId !== actor.id) {
+      throw new Error('Only the project leader can delete this project.');
+    }
+    const relatedCollections = ['tasks', 'files', 'fileContents', 'taskComments', 'activities'] as const;
+    const relatedSnapshots = await Promise.all(relatedCollections.map(collectionName =>
+      getDocs(query(
+        collection(firestore, collectionName),
+        where('projectId', '==', projectId)
+      ))
     ));
-
-    const cleanupRefs = [
-      ...relatedTasks.map(task => doc(firestore, 'tasks', task.id)),
-      ...relatedFiles.docs.flatMap(file => [
-        doc(firestore, 'files', file.id),
-        doc(firestore, 'fileContents', file.id)
-      ])
-    ];
+    const cleanupRefs = relatedSnapshots.flatMap((snapshot, index) =>
+      snapshot.docs.map(record => doc(firestore, relatedCollections[index], record.id))
+    );
     for (let offset = 0; offset < cleanupRefs.length; offset += FIRESTORE_BATCH_LIMIT) {
       const cleanupBatch = writeBatch(firestore);
       cleanupRefs
@@ -359,6 +550,15 @@ export class DataService {
     ));
     await batch.commit();
     this._files.update(files => files.filter(file => file.projectId !== projectId));
+    this._taskComments.update(comments => comments.filter(comment => comment.projectId !== projectId));
+    this._activities.update(activities => activities.filter(activity => activity.projectId !== projectId));
+    try {
+      await this.localFileStore.removeProjectFiles(actor.id, projectId);
+    } catch (error) {
+      console.error('Project was deleted, but browser-local files could not be removed.', error);
+      throw new Error('Project deleted, but browser-local files could not be removed from this device.');
+    }
+    this._localFiles.update(files => files.filter(file => file.projectId !== projectId));
   }
 
   async uploadFile(file: File, projectId: string, uploadedBy: string): Promise<void> {
@@ -410,7 +610,10 @@ export class DataService {
   }
 
   async downloadFile(file: FileItem): Promise<Blob> {
-    this.requireUser();
+    const actor = this.requireUser();
+    if (!this._projects().some(project => project.id === file.projectId)) {
+      throw new Error('You do not have access to this project file.');
+    }
     const snapshot = await getDoc(doc(firestore, 'fileContents', file.id));
     if (!snapshot.exists()) throw new Error('File contents are no longer available.');
     const content = snapshot.data();
@@ -432,6 +635,23 @@ export class DataService {
     }
     const buffer = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(buffer).set(bytes);
+    const project = this._projects().find(item => item.id === file.projectId);
+    const batch = writeBatch(firestore);
+    batch.set(doc(collection(firestore, 'activities')), {
+      projectId: file.projectId,
+      userId: actor.id,
+      type: 'file_downloaded',
+      message: `Downloaded ${file.name}`,
+      createdAt: new Date().toISOString()
+    });
+    batch.set(doc(collection(firestore, 'auditLogs')), this.auditEntry(
+      actor,
+      'file.downloaded',
+      file.id,
+      file.name,
+      `Downloaded ${file.name} from ${project?.title ?? 'project'}.`
+    ));
+    await batch.commit();
     return new Blob([buffer], { type: contentType });
   }
 
@@ -480,14 +700,36 @@ export class DataService {
     return localFile.blob;
   }
 
-  async updateTeamMemberRole(userId: string, role: User['role']): Promise<void> {
+  async updateTeamMemberRole(
+    userId: string,
+    role: User['role'],
+    options: { reason?: string } = {}
+  ): Promise<void> {
     const actor = this.requireAdmin();
     const target = this._team().find(member => member.id === userId);
     if (!target) throw new Error('User is no longer available.');
     if (target.role === role) return;
+
+    if (role === 'admin') {
+      if (actor.id === userId) {
+        throw new Error('You cannot grant administrator access to your own account.');
+      }
+      if (target.isActive === false) {
+        throw new Error('Enable the account before granting administrator access.');
+      }
+      const reason = options.reason?.trim() ?? '';
+      if (reason.length < MIN_ADMIN_PROMOTION_REASON) {
+        throw new Error(
+          `Granting administrator access needs a written justification of at least ${MIN_ADMIN_PROMOTION_REASON} characters.`
+        );
+      }
+    }
+
     if (target.role === 'admin' && role !== 'admin' && this.activeAdminCount() <= 1) {
       throw new Error('The system must keep at least one active administrator.');
     }
+
+    const reason = options.reason?.trim();
     const batch = writeBatch(firestore);
     batch.update(doc(firestore, 'users', userId), { role });
     batch.update(doc(firestore, 'teamDirectory', userId), { role });
@@ -496,8 +738,16 @@ export class DataService {
       'user.role_changed',
       userId,
       target.name,
-      `Changed role from ${target.role} to ${role}.`
+      `Changed role from ${target.role} to ${role}.${reason ? ` Reason: ${reason}` : ''}`
     ));
+    batch.set(doc(collection(firestore, 'notifications')), {
+      userId,
+      kind: 'role_changed',
+      title: 'Your SPMS role changed',
+      body: `An administrator set your role to ${role.replace('_', ' ')}.`,
+      createdAt: new Date().toISOString(),
+      read: false
+    });
     await batch.commit();
   }
 
@@ -510,6 +760,7 @@ export class DataService {
     if (!isActive && target.role === 'admin' && this.activeAdminCount() <= 1) {
       throw new Error('The system must keep at least one active administrator.');
     }
+    const now = new Date().toISOString();
     const batch = writeBatch(firestore);
     batch.update(doc(firestore, 'users', userId), { isActive });
     batch.update(doc(firestore, 'teamDirectory', userId), { isActive });
@@ -520,6 +771,17 @@ export class DataService {
       target.name,
       isActive ? 'Enabled account access.' : 'Disabled account access.'
     ));
+    // The recipient keeps this notice even though their access is now closed.
+    batch.set(doc(collection(firestore, 'notifications')), {
+      userId,
+      kind: isActive ? 'account_enabled' : 'account_disabled',
+      title: isActive ? 'Your SPMS account was re-enabled' : 'Your SPMS account was disabled',
+      body: isActive
+        ? `Access was restored by ${actor.name} on ${now.slice(0, 10)}.`
+        : `Access was closed by ${actor.name} on ${now.slice(0, 10)}. Contact the SPMS office if this was unexpected.`,
+      createdAt: now,
+      read: false
+    });
     await batch.commit();
   }
 
@@ -601,21 +863,28 @@ export class DataService {
       .filter(project => project.status !== 'completed' && !!project.deadline)
       .map(project => ({
         id: `project-${project.id}`,
+        projectId: project.id,
         title: `${project.title} deadline`,
         projectTitle: project.title,
         dueDate: project.deadline!,
+        dueTime: project.deadlineTime,
         type: 'report'
       }));
     const taskDeadlines: DeadlineItem[] = this._tasks()
       .filter(task => task.status !== 'completed')
       .map(task => ({
         id: task.id,
+        projectId: task.projectId,
         title: task.title,
         projectTitle: this._projects().find(project => project.id === task.projectId)?.title ?? 'Project',
         dueDate: task.dueDate,
+        dueTime: task.dueTime,
         type: 'task'
       }));
-    this._deadlines.set([...projectDeadlines, ...taskDeadlines].sort((a, b) => a.dueDate.localeCompare(b.dueDate)));
+    this._deadlines.set(
+      [...projectDeadlines, ...taskDeadlines]
+        .sort((a, b) => dueSortKey(a.dueDate, a.dueTime).localeCompare(dueSortKey(b.dueDate, b.dueTime)))
+    );
   }
 
   private requireUser(): User {
@@ -686,5 +955,7 @@ export class DataService {
     this._localFiles.set([]);
     this._auditLogs.set([]);
     this._systemSettings.set(DEFAULT_SYSTEM_SETTINGS);
+    this._taskComments.set([]);
+    this._notifications.set([]);
   }
 }

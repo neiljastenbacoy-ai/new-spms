@@ -1,5 +1,7 @@
 import { Component, effect, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { ActivatedRoute } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { AuthService } from '../../core/services/auth.service';
 import { DataService, MAX_SHARED_FILE_BYTES } from '../../core/services/data.service';
 import { FileItem } from '../../core/models/models';
@@ -12,6 +14,10 @@ import { FileItem } from '../../core/models/models';
     <div class="page-head">
       <h1>File Management</h1>
     </div>
+    <label class="file-search">Search files
+      <input type="search" [value]="search()" (input)="updateSearch($event)"
+        placeholder="Search file names or projects" aria-label="Search shared files" />
+    </label>
     <label class="project-picker">{{ canUpload() ? 'Upload to project' : 'Filter by project' }}
       <select [value]="selectedProjectId()" (change)="selectProject($event)" [disabled]="isUploading()">
         <option value="">{{ canUpload() ? 'Select a project for uploads' : 'All assigned projects' }}</option>
@@ -24,24 +30,21 @@ import { FileItem } from '../../core/models/models';
       <input #fileInput type="file" hidden multiple accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx,.xls,.xlsx,.csv,.txt" (change)="onFilesSelected($event)" />
       <div class="upload-zone" [class.disabled]="isUploading() || !selectedProjectId()" [class.uploading]="isUploading()" (click)="!isUploading() && selectedProjectId() && fileInput.click()" (dragover)="onDragOver($event)" (drop)="onDrop($event)">
         <div class="upload-icon">⇧</div>
-        <strong>{{ isUploading() ? 'Uploading files...' : 'Drop files here or click to upload' }}</strong>
+        <strong>{{ isUploading() ? 'Uploading files...' : 'Upload files' }}</strong>
         <span>{{ selectedProjectId() ? 'PDF, images, documents, and spreadsheets · up to 500 KiB per file' : 'Select a project above to enable uploads' }}</span>
-        <button type="button" class="btn" [disabled]="isUploading() || !selectedProjectId()" (click)="fileInput.click(); $event.stopPropagation()">Choose Files</button>
+        <button type="button" class="btn" [disabled]="isUploading() || !selectedProjectId()" (click)="fileInput.click(); $event.stopPropagation()">Choose files</button>
       </div>
-    } @else {
-      <div class="viewer-note">Files in your assigned projects are shared through Firestore. Uploads are available to students and project leaders.</div>
     }
     @if (message()) { <div class="message" [class.error]="messageIsError()">{{ message() }}</div> }
     @if (visibleLocalFiles().length) {
       <section class="local-files">
         <h2>Files saved in this browser</h2>
-        <p>These older uploads are not shared yet. Share each file with its project to move it to Firestore (500 KiB maximum).</p>
         @for (file of visibleLocalFiles(); track file.id) {
           <div class="file">
             <span class="ico">{{ fileIcon(file.type) }}</span>
             <div>
               <strong>{{ file.name }}</strong>
-              <span>{{ projectTitle(file.projectId) }} · {{ formatSize(file.size) }}</span>
+              <span>{{ projectTitle(file.projectId) }} · Uploaded by {{ uploaderName(file.uploadedBy) }} · {{ formatSize(file.size) }}</span>
             </div>
             <span class="date">{{ formatDate(file.uploadedAt) }}</span>
             <div class="file-actions">
@@ -61,7 +64,7 @@ import { FileItem } from '../../core/models/models';
         <span class="ico">{{ fileIcon(file.type) }}</span>
         <div>
           <strong>{{ file.name }}</strong>
-          <span>{{ projectTitle(file.projectId) }} · {{ formatSize(file.size) }}</span>
+          <span>{{ projectTitle(file.projectId) }} · Uploaded by {{ uploaderName(file.uploadedBy) }} · {{ formatSize(file.size) }}</span>
         </div>
         <span class="date">{{ formatDate(file.uploadedAt) }}</span>
         <div class="file-actions">
@@ -78,37 +81,38 @@ import { FileItem } from '../../core/models/models';
   `,
   styles: [`
     .page-head { margin-bottom: 1.25rem; }
-    .page-head h1 { margin: 0; font-size: 1.5rem; color: #0f172a; }
-    .page-head p { margin: 0.25rem 0 0; color: #64748b; }
-    .project-picker { display:flex; flex-direction:column; gap:.35rem; max-width:440px; margin-bottom:.75rem; color:#475569; font-size:.8rem; font-weight:600; }
-    .project-picker select { height:40px; border:1px solid #cbd5e1; border-radius:9px; background:#fff; color:#334155; padding:.45rem .7rem; font:inherit; }
-    .viewer-note { margin-bottom:1rem; padding:.8rem 1rem; border:1px solid var(--border,#e2e8f0); border-radius:12px; background:var(--surface,#fff); color:var(--muted,#64748b); font-size:.8rem; }
+    .page-head h1 { margin: 0; font-size: 1.5rem; color: var(--text); }
+    .page-head p { margin: 0.25rem 0 0; color: var(--muted); }
+    .file-search { display:grid; gap:.35rem; max-width:440px; margin-bottom:.75rem; color:var(--ink-soft); font-size:.78rem; font-weight:600; }
+    .file-search input { width:100%; min-height:40px; padding:.5rem .7rem; border:1px solid var(--border); border-radius:8px; background:var(--field); color:var(--text); font:inherit; }
+    .project-picker { display:flex; flex-direction:column; gap:.35rem; max-width:440px; margin-bottom:.75rem; color:var(--ink-soft); font-size:.8rem; font-weight:600; }
+    .project-picker select { height:40px; border:1px solid var(--line-strong); border-radius:9px; background: var(--surface); color:var(--ink-soft); padding:.45rem .7rem; font:inherit; }
     .local-files { display:grid; gap:.55rem; margin-bottom:1rem; }
-    .local-files h2 { margin:0; color:#334155; font-size:.92rem; }
-    .local-files > p { margin:0 0 .25rem; color:#64748b; font-size:.78rem; }
+    .local-files h2 { margin:0; color:var(--ink-soft); font-size:.92rem; }
+    .local-files > p { margin:0 0 .25rem; color:var(--muted); font-size:.78rem; }
     .upload-zone {
-      border: 2px dashed #cbd5e1;
+      border: 2px dashed var(--line-strong);
       border-radius: 16px;
       padding: 2.5rem;
       text-align: center;
-      background: #f8fafc;
+      background: var(--surface-2);
       margin-bottom: 1.25rem;
-      color: #64748b;
+      color: var(--muted);
       cursor: pointer;
       transition: border-color .15s, background .15s;
     }
     .upload-zone:hover { border-color:#60a5fa; background:#eff6ff; }
     .upload-zone.disabled { opacity:.65; cursor:not-allowed; }
     .upload-zone.uploading { cursor:wait; }
-    .upload-icon { width:44px; height:44px; display:grid; place-items:center; margin:0 auto .65rem; border-radius:50%; background:#dbeafe; color:#2563eb; font-size:1.35rem; }
-    .upload-zone strong { display:block; color:#334155; }
+    .upload-icon { width:44px; height:44px; display:grid; place-items:center; margin:0 auto .65rem; border-radius:50%; background:var(--surface-2); color:var(--accent); font-size:1.35rem; }
+    .upload-zone strong { display:block; color:var(--ink-soft); }
     .upload-zone > span { display:block; margin-top:.25rem; font-size:.78rem; }
-    .message { margin:-.75rem 0 .75rem; padding:.65rem .8rem; background:#dcfce7; color:#166534; border-radius:8px; font-size:.82rem; }
-    .message.error { background:#fef2f2; color:#b91c1c; }
+    .message { margin:-.75rem 0 .75rem; padding:.65rem .8rem; background:var(--surface-2); color:var(--moss); border-radius:8px; font-size:.82rem; }
+    .message.error { background:var(--danger-soft); color:var(--danger); }
     .btn {
       margin-top: 0.75rem;
       padding: 0.55rem 1.1rem;
-      background: #2563eb;
+      background: var(--accent);
       color: #fff;
       border: none;
       border-radius: 10px;
@@ -117,10 +121,10 @@ import { FileItem } from '../../core/models/models';
     }
     .btn:disabled { opacity:.6; cursor:wait; }
     .file-list { display: flex; flex-direction: column; gap: 0.55rem; }
-    .empty-state { padding:2rem 1rem; border:1px dashed var(--border,#e2e8f0); border-radius:14px; color:var(--muted,#64748b); text-align:center; font-size:.82rem; }
+    .empty-state { padding:2rem 1rem; border:1px dashed var(--border,var(--border)); border-radius:14px; color:var(--muted,var(--muted)); text-align:center; font-size:.82rem; }
     .file {
-      background: #fff;
-      border: 1px solid #e2e8f0;
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 12px;
       padding: 0.9rem 1.15rem;
       display: grid;
@@ -129,26 +133,32 @@ import { FileItem } from '../../core/models/models';
       align-items: center;
     }
     .ico { font-size: 1.4rem; }
-    .file strong { display: block; color: #0f172a; font-size: 0.9rem; }
-    .file span { font-size: 0.8rem; color: #64748b; }
-    .date { font-size: 0.8rem; color: #94a3b8; }
+    .file strong { display: block; color: var(--text); font-size: 0.9rem; }
+    .file span { font-size: 0.8rem; color: var(--muted); }
+    .date { font-size: 0.8rem; color: var(--muted); }
     .file-actions { display:flex; gap:.4rem; }
-    .file-actions button { border:1px solid #e2e8f0; border-radius:8px; background:#fff; color:#334155; padding:.38rem .62rem; font-size:.72rem; cursor:pointer; }
+    .file-actions button { border:1px solid var(--border); border-radius:8px; background: var(--surface); color:var(--ink-soft); padding:.38rem .62rem; font-size:.72rem; cursor:pointer; }
     .file-actions button:disabled { opacity:.5; cursor:not-allowed; }
-    .file-actions .remove { color:#dc2626; border-color:#fecaca; }
+    .file-actions .remove { color:var(--danger); border-color:var(--danger-soft); }
     @media (max-width:700px) { .file { grid-template-columns:auto 1fr auto; } .file-actions { grid-column:2/-1; } }
   `]
 })
 export class FilesComponent {
   readonly maxSharedFileBytes = MAX_SHARED_FILE_BYTES;
   readonly data = inject(DataService);
-  private readonly auth = inject(AuthService);
+  readonly auth = inject(AuthService);
+  private readonly route = inject(ActivatedRoute);
   readonly message = signal('');
   readonly messageIsError = signal(false);
   readonly selectedProjectId = signal('');
   readonly isUploading = signal(false);
+  readonly search = signal('');
 
   constructor() {
+    this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe(params => {
+      this.selectedProjectId.set(params.get('projectId') ?? '');
+      this.search.set(params.get('q') ?? '');
+    });
     effect(() => {
       const projects = this.data.projects();
       if (projects.length === 1 && !this.selectedProjectId()) {
@@ -162,17 +172,34 @@ export class FilesComponent {
   }
 
   canRemove(file: FileItem): boolean {
-    return this.auth.hasRole('admin', 'project_leader') || file.uploadedBy === this.auth.user()?.id;
+    return this.auth.hasRole('project_leader') || file.uploadedBy === this.auth.user()?.id;
+  }
+
+  uploaderName(userId: string): string {
+    return this.data.team().find(member => member.id === userId)?.name
+      ?? (userId === this.auth.user()?.id ? 'you' : 'Unknown member');
   }
 
   visibleFiles(): FileItem[] {
     const projectId = this.selectedProjectId();
-    return this.data.files().filter(file => !projectId || file.projectId === projectId);
+    const query = this.search().trim().toLowerCase();
+    return this.data.files().filter(file =>
+      (!projectId || file.projectId === projectId)
+      && (!query || file.name.toLowerCase().includes(query) || this.projectTitle(file.projectId).toLowerCase().includes(query))
+    );
   }
 
   visibleLocalFiles(): FileItem[] {
     const projectId = this.selectedProjectId();
-    return this.data.localFiles().filter(file => !projectId || file.projectId === projectId);
+    const query = this.search().trim().toLowerCase();
+    return this.data.localFiles().filter(file =>
+      (!projectId || file.projectId === projectId)
+      && (!query || file.name.toLowerCase().includes(query) || this.projectTitle(file.projectId).toLowerCase().includes(query))
+    );
+  }
+
+  updateSearch(event: Event): void {
+    this.search.set((event.target as HTMLInputElement).value);
   }
 
   selectProject(event: Event): void {

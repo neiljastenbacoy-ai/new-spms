@@ -9,10 +9,19 @@ export interface User {
   studentId?: string;
   photoUrl?: string;
   department?: string;
+  program?: string;
   phone?: string;
   bio?: string;
   isActive?: boolean;
 }
+
+export const PROGRAMS = [
+  'Information Technology',
+  'Electrical Mechanical Technology',
+  'Technology Communication Management'
+] as const;
+
+export type Program = typeof PROGRAMS[number];
 
 export type ProjectStatus = 'ongoing' | 'completed' | 'on_hold' | 'overdue';
 export type TaskStatus = 'todo' | 'in_progress' | 'completed' | 'overdue';
@@ -28,6 +37,8 @@ export interface Project {
   adviserId?: string;
   createdAt: string;
   deadline?: string;
+  /** Optional 24-hour `HH:mm` for the deadline. */
+  deadlineTime?: string;
   color?: string;
   feedback?: string[];
 }
@@ -41,6 +52,8 @@ export interface Task {
   status: TaskStatus;
   priority: 'low' | 'medium' | 'high';
   dueDate: string;
+  /** Optional 24-hour `HH:mm` for the due date. */
+  dueTime?: string;
   completedAt?: string;
   createdAt: string;
 }
@@ -81,7 +94,7 @@ export interface AuditRecord {
 
 export interface Activity {
   id: string;
-  type: 'task_assigned' | 'file_uploaded' | 'comment' | 'status_update' | 'member_added';
+  type: 'task_assigned' | 'file_uploaded' | 'file_downloaded' | 'comment' | 'status_update' | 'member_added';
   message: string;
   userId: string;
   projectId?: string;
@@ -90,9 +103,12 @@ export interface Activity {
 
 export interface DeadlineItem {
   id: string;
+  projectId: string;
   title: string;
   projectTitle: string;
   dueDate: string;
+  /** Optional 24-hour `HH:mm` carried from the project deadline or task. */
+  dueTime?: string;
   type: 'report' | 'documentation' | 'defense' | 'task';
 }
 
@@ -104,4 +120,28 @@ export interface FileItem {
   size: number;
   uploadedAt: string;
   type: string;
+}
+
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  projectId: string;
+  authorId: string;
+  authorName: string;
+  authorRole: UserRole;
+  body: string;
+  createdAt: string;
+}
+
+export type NotificationKind = 'account_disabled' | 'account_enabled' | 'role_changed' | 'system';
+
+export interface AppNotification {
+  id: string;
+  /** Recipient — the account this notice belongs to. */
+  userId: string;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  createdAt: string;
+  read: boolean;
 }

@@ -96,7 +96,7 @@ export class AuthService {
     this._user.set(profile);
   }
 
-  async register(name: string, email: string, password: string): Promise<void> {
+  async register(name: string, email: string, password: string, program?: string): Promise<void> {
     const settings = await getDoc(doc(firestore, 'systemSettings', 'general'));
     if (settings.exists() && settings.data()['registrationOpen'] === false) {
       throw Object.assign(new Error('Student registration is currently closed.'), {
@@ -112,7 +112,8 @@ export class AuthService {
       email: credential.user.email ?? email.trim(),
       role: 'student',
       avatar: this.initials(cleanName),
-      isActive: true
+      isActive: true,
+      program: program ?? ''
     };
     await Promise.all([
       setDoc(doc(firestore, 'users', user.id), user),
@@ -204,13 +205,14 @@ export class AuthService {
     };
   }
 
-  private toDirectoryEntry(user: User): Pick<User, 'id' | 'name' | 'email' | 'role' | 'avatar' | 'photoUrl' | 'isActive'> {
-    const entry: Pick<User, 'id' | 'name' | 'email' | 'role' | 'avatar' | 'photoUrl' | 'isActive'> = {
+  private toDirectoryEntry(user: User): Pick<User, 'id' | 'name' | 'email' | 'role' | 'avatar' | 'photoUrl' | 'isActive' | 'program'> {
+    const entry: Pick<User, 'id' | 'name' | 'email' | 'role' | 'avatar' | 'photoUrl' | 'isActive' | 'program'> = {
       id: user.id,
       name: user.name,
       email: user.email,
       role: user.role,
-      isActive: user.isActive !== false
+      isActive: user.isActive !== false,
+      program: user.program ?? ''
     };
     if (user.avatar) entry.avatar = user.avatar;
     entry.photoUrl = user.photoUrl ?? '';

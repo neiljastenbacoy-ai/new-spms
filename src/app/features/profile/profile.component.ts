@@ -15,7 +15,6 @@ import { User } from '../../core/models/models';
         <div>
           <span class="eyebrow">Account</span>
           <h1>Profile settings</h1>
-          <p>Manage your personal details and account preferences.</p>
         </div>
       </div>
 
@@ -62,7 +61,6 @@ import { User } from '../../core/models/models';
           <div class="settings-head">
             <div>
               <h2>Personal information</h2>
-              <p>Keep your profile details up to date.</p>
             </div>
             @if (saved()) {
               <span class="saved">✓ Saved</span>
@@ -132,7 +130,7 @@ import { User } from '../../core/models/models';
     :host { display:block; }
     .profile-page { max-width:1180px; margin:0 auto; }
     .page-head { margin-bottom:1.35rem; }
-    .eyebrow { color:#6366f1; font-size:.72rem; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
+    .eyebrow { color:var(--accent); font-size:.72rem; font-weight:800; letter-spacing:.12em; text-transform:uppercase; }
     .page-head h1 { margin:.28rem 0 .25rem; font-size:1.75rem; letter-spacing:-.035em; color:var(--text); }
     .page-head p { margin:0; color:var(--muted); font-size:.9rem; }
     .profile-layout { display:grid; grid-template-columns:280px minmax(0,1fr); gap:1rem; align-items:start; }
@@ -155,7 +153,7 @@ import { User } from '../../core/models/models';
     .photo-fallback {
       display:grid;
       place-items:center;
-      background:linear-gradient(135deg,#6366f1,#a78bfa);
+      background:linear-gradient(135deg,var(--accent),var(--accent));
       color:#fff;
       font-size:2.25rem;
       font-weight:800;
@@ -169,12 +167,12 @@ import { User } from '../../core/models/models';
       height:36px;
       border:3px solid var(--surface);
       border-radius:50%;
-      background:#6366f1;
+      background:var(--accent);
       color:#fff;
       display:grid;
       place-items:center;
       cursor:pointer;
-      box-shadow:0 5px 12px rgba(79,70,229,.25);
+      box-shadow:0 5px 12px rgba(20,51,42,.28);
     }
     .photo-edit input, .upload-button input { display:none; }
     .profile-card h2 { margin:.75rem 0 .15rem; font-size:1.05rem; color:var(--text); }
@@ -192,16 +190,16 @@ import { User } from '../../core/models/models';
       font-weight:700;
       cursor:pointer;
     }
-    .upload-button { background:#eef2ff; color:#4f46e5; border:1px solid #c7d2fe; }
-    .remove-button { background:var(--surface); color:#dc2626; border:1px solid #fecaca; }
+    .upload-button { background:var(--surface-2); color:var(--accent); border:1px solid var(--accent); }
+    .remove-button { background:var(--surface); color:var(--danger); border:1px solid var(--danger-soft); }
     .profile-card small { display:block; margin-top:.75rem; color:var(--muted); font-size:.68rem; }
-    .photo-error { margin-top:.65rem; color:#dc2626; font-size:.72rem; }
-    .photo-success { margin-top:.65rem; color:#15803d; font-size:.72rem; font-weight:700; }
+    .photo-error { margin-top:.65rem; color:var(--danger); font-size:.72rem; }
+    .photo-success { margin-top:.65rem; color:var(--moss); font-size:.72rem; font-weight:700; }
     .settings-card { padding:1.35rem 1.5rem 1.25rem; }
     .settings-head { display:flex; align-items:flex-start; justify-content:space-between; padding-bottom:1.1rem; border-bottom:1px solid var(--border); }
     .settings-head h2 { margin:0 0 .25rem; font-size:1.05rem; color:var(--text); }
     .settings-head p { margin:0; color:var(--muted); font-size:.82rem; }
-    .saved { color:#15803d; background:#dcfce7; border-radius:999px; padding:.35rem .65rem; font-size:.72rem; font-weight:800; }
+    .saved { color:var(--moss); background:var(--surface-2); border-radius:999px; padding:.35rem .65rem; font-size:.72rem; font-weight:800; }
     .profile-form { padding-top:1.15rem; }
     .field-grid { display:grid; grid-template-columns:1fr 1fr; gap:.85rem 1rem; }
     .field-grid label { display:flex; flex-direction:column; gap:.38rem; color:var(--text); font-size:.78rem; font-weight:700; }
@@ -218,7 +216,7 @@ import { User } from '../../core/models/models';
       resize:vertical;
     }
     .field-grid input { height:44px; }
-    .field-grid input:focus, .field-grid textarea:focus { outline:none; border-color:#818cf8; box-shadow:0 0 0 3px rgba(99,102,241,.11); }
+    .field-grid input:focus, .field-grid textarea:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px rgba(176,74,44,.16); }
     .form-divider { height:1px; background:var(--border); margin:1.15rem 0; }
     .preference-row { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
     .preference-row > div:first-child { display:flex; flex-direction:column; gap:.2rem; }
@@ -238,14 +236,14 @@ import { User } from '../../core/models/models';
       font-size:.76rem;
       cursor:pointer;
     }
-    .theme-options button.active { border-color:#818cf8; color:#4f46e5; background:rgba(99,102,241,.06); }
+    .theme-options button.active { border-color:var(--accent); color:var(--accent); background:rgba(176,74,44,.08); }
     .theme-preview { width:30px; height:30px; display:grid; place-items:center; border-radius:7px; }
-    .light-preview { background:#f8fafc; color:#d97706; border:1px solid #e2e8f0; }
-    .dark-preview { background:#1e293b; color:#f8fafc; }
+    .light-preview { background:var(--surface-2); color:var(--ochre); border:1px solid var(--border); }
+    .dark-preview { background:var(--text); color:var(--surface-2); }
     .form-actions { display:flex; justify-content:flex-end; gap:.55rem; margin-top:1.35rem; }
     .form-actions button { height:42px; border-radius:9px; padding:.55rem .9rem; font-weight:800; font-size:.78rem; cursor:pointer; }
     .secondary { border:1px solid var(--border); background:var(--surface); color:var(--text); }
-    .primary { border:0; background:linear-gradient(135deg,#5661d8,#7c83ed); color:#fff; box-shadow:0 8px 18px rgba(91,103,241,.18); }
+    .primary { border:0; background:linear-gradient(135deg,var(--accent),var(--accent)); color:#fff; box-shadow:0 8px 18px rgba(91,103,241,.18); }
     .primary:disabled { opacity:.7; cursor:not-allowed; }
     @media (max-width:850px) {
       .profile-layout { grid-template-columns:1fr; }
